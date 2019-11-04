@@ -2,7 +2,7 @@ import os
 import boto3
 from botocore.vendored import requests
 
-def get_cloudflare_ip_list():
+def get_cloudflare_ipv4_list():
     'Call the CloudFlare API and return a list of IPs'
     response = requests.get('https://api.cloudflare.com/client/v4/ips')
     temp = response.json()
@@ -10,6 +10,16 @@ def get_cloudflare_ip_list():
         return temp['result']['ipv4_cidrs']
 
     raise Exception("Cloudflare response error")
+
+def get_cloudflare_ipv6_list():
+    'Call the CloudFlare API and return a list of IPs'
+    response = requests.get('https://api.cloudflare.com/client/v4/ips')
+    temp = response.json()
+    if 'result' in temp and 'ipv6_cidrs' in temp['result']:
+        return temp['result']['ipv6_cidrs']
+
+    raise Exception("Cloudflare response error")
+
 
 def get_aws_security_group(group_id):
     'Return the defined Security Group'
@@ -25,12 +35,24 @@ def check_rule_exists(rules, address, port):
         for ip_range in rule['IpRanges']:
             if ip_range['CidrIp'] == address and rule['FromPort'] == port:
                 return True
+        
+        for ipv6_range in rule['Ipv6Ranges']:
+            if ipv6_range['CidrIpv6'] == address and rule['FromPort'] == port:
+                return True
+        
+        
     return False
 
 def add_rule(group, address, port):
     'Add the ip address/port to the security group'
     group.authorize_ingress(IpProtocol="tcp", CidrIp=address, FromPort=port, ToPort=port)
-    print "Added %s : %i  " % (address, port)
+    print("Added %s : %i  " % (address, port))
+
+def add_ipv6_rule(group, address,port):
+    'Add the ipv6 address/port to the security group'
+    
+    group.authorize_ingress(IpPermissions=[{'IpProtocol': 'tcp','FromPort': port,'ToPort': port,'Ipv6Ranges': [{'CidrIpv6': address}]}])
+    print("Added %s : %i  " % (address, port))
 
 def lambda_handler(event, context):
     'aws lambda main func'
@@ -40,9 +62,18 @@ def lambda_handler(event, context):
 
     security_group = get_aws_security_group(os.environ['SECURITY_GROUP_ID'])
     current_rules = security_group.ip_permissions
-    ip_addresses = get_cloudflare_ip_list()
+    
+    ip_addresses = get_cloudflare_ipv4_list()
 
     for ip_address in ip_addresses:
         for port in ports:
             if not check_rule_exists(current_rules, ip_address, port):
                 add_rule(security_group, ip_address, port)
+                
+    ipv6_addresses = get_cloudflare_ipv6_list()
+
+    for ip_address in ipv6_addresses:
+        for port in ports:
+            if not check_rule_exists(current_rules, ip_address, port):
+                add_ipv6_rule(security_group, ip_address, port)
+                
